@@ -8,8 +8,10 @@ install.packages("RColorBrewer")
 install.packages("pheatmap")
 
 # download the data files (it will download to the current working directory)
-download.file("https://raw.githubusercontent.com/igordot/tutorials/master/ca-genes-stats-sig.csv", destfile="ca-genes-stats-sig.csv")
-download.file("https://raw.githubusercontent.com/igordot/tutorials/master/ca-genes-fpkm.csv", destfile="ca-genes-fpkm.csv")
+fileName="ca-genes-fpkm.csv"
+download.file(paste0("https://raw.githubusercontent.com/igordot/tutorials/master/", fileName), destfile=fileName)
+fileName="ca-genes-stats-sig.csv"
+download.file(paste0("https://raw.githubusercontent.com/igordot/tutorials/master/", fileName), destfile=fileName)
 
 # load the relevant packages
 library(RColorBrewer)
