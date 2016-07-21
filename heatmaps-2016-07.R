@@ -2,7 +2,7 @@
 
 
 
-# part 1 - set working directory (important for any project)
+# part 1 - set working directory (default location for input and output files)
 
 # select Desktop on a Mac (or any other directory)
 setwd("~/Desktop")
@@ -15,11 +15,11 @@ setwd("~/Desktop")
 install.packages("RColorBrewer")
 install.packages("pheatmap")
 
-# download genes with FPKM values (filtered for detectable genes)
+# download a table of genes with corresponding FPKM values (filtered for detectable genes)
 fileName = "ca-genes-fpkm.csv"
 download.file(paste0("https://raw.githubusercontent.com/igordot/tutorials/master/", fileName), destfile=fileName)
 
-# download genes with stats (filtered for significant genes)
+# download a table of genes with differential expression stats (filtered for significant genes)
 fileName = "ca-genes-stats-sig.csv"
 download.file(paste0("https://raw.githubusercontent.com/igordot/tutorials/master/", fileName), destfile=fileName)
 
@@ -27,18 +27,18 @@ download.file(paste0("https://raw.githubusercontent.com/igordot/tutorials/master
 
 # part 3 - load the relevant packages and example data
 
-# load packages
+# load the relevant packages
 library(pheatmap)
 library(RColorBrewer)
 
-# import gene FPKM values
+# import gene FPKM values (used for the actual heatmap)
 geneVals = read.csv(file="ca-genes-fpkm.csv", row.names=1, check.names=F, stringsAsFactors=F)
 
 # check what you imported
 head(geneVals)
 dim(geneVals)
 
-# import gene stats
+# import gene stats (used for filtering the list of genes)
 geneStats = read.csv(file="ca-genes-stats-sig.csv", row.names=1, check.names=F, stringsAsFactors=F)
 
 # check what you imported
@@ -112,6 +112,12 @@ myColors
 # visualize results
 pheatmap(heatmapValsLog, scale="row", color=myColors)
 
+# reverse the color order
+myColors = rev(myColors)
+
+# visualize results
+pheatmap(heatmapValsLog, scale="row", color=myColors)
+
 
 
 # part 7 - subset genes
@@ -174,12 +180,19 @@ heatmapTop50[p$tree_row$order,]
 
 # part 9 - label groups
 
-# column (sample) labels
+# create a data frame for sample labels with a column "group" set to sample names
 colLabels = data.frame(group=colnames(geneValsLog), stringsAsFactors=F)
 colLabels
+
+# convert row names (consecutive integers by default) to sample names (from column "group")
 rownames(colLabels) = colLabels[,"group"]
 colLabels
+
+# rename contents of column "group" that start with "AL_05" to "young"
 colLabels[,"group"] = gsub("AL_05.*", "young", x=colLabels[,"group"])
+colLabels
+
+# rename contents of column "group" that start with "AL_15" to "old"
 colLabels[,"group"] = gsub("AL_15.*", "old", x=colLabels[,"group"])
 colLabels
 
@@ -187,9 +200,11 @@ colLabels
 pheatmap(heatmapTop50, scale="row", color=myColors, border_color=NA, fontsize_row=6,
 annotation_col=colLabels)
 
-# column (sample) label colors
+# create a list of sample label colors
 colColors = list(group = c("green", "brown"))
 colColors
+
+# assign names to the list of colors using group names
 names(colColors$group) = unique(colLabels[,"group"])
 colColors
 
@@ -199,5 +214,5 @@ annotation_col=colLabels, annotation_colors=colColors)
 
 
 
-# if all else fails, some graphical alternatives:
-# https://github.com/igordot/genomics/blob/master/notes/heatmaps.md
+# if you prefer to avoid coding, check this listing of graphical alternatives:
+# http://bit.ly/heatmapoptions
