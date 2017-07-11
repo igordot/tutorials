@@ -1,0 +1,256 @@
+---
+title: "Creating Heatmaps in R"
+output:
+  html_document:
+    toc: yes
+  html_notebook:
+    theme: readable
+    toc: yes
+    toc_float: yes
+---
+
+
+## Introduction
+
+This is a brief tutorial on retrieving and preparing data for generating a heatmap in R using genomic data. We'll be using publicly available data from "Comparative transcriptomic and proteomic analyses provide insights into the key genes involved in high-altitude adaptation in the Tibetan pig" [Scientific Reports 2017]. This is a comparative analysis of the transcriptomic and proteomic profiles of heart tissues obtained from Tibetan and Yorkshire pigs raised at high (TH and YH) and low (TL and YL) altitudes. The study aimed to identify key genes and molecular mechanisms involved in the high-altitude adaptations of the Tibetan pig.
+
+The [full text](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5473931/) of the study is available through PubMed Central. The raw and processed data is deposited in GEO under series [GSE92981](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE92981).
+
+
+## Load packages
+
+Load the relevant packages.
+
+```{r}
+library(tidyverse)
+library(magrittr)
+library(pheatmap)
+library(RColorBrewer)
+library(rio)
+```
+
+If you get an error `there is no package`, you need to install some packages first. If you install some, others should install automatically as dependencies. Uncomment (remove `#`) the relevant commands to install.
+
+```{r}
+# install.packages("tidyverse")
+# install.packages("pheatmap")
+# install.packages("rio")
+```
+
+
+## Retrieve data
+
+
+### Download values
+
+FPKMs (Fragments Per Kilobase of transcript per Million mapped reads) are a common RNA-seq expression unit. First, download the FPKM table. In the GEO submission, this is the supplementary file "GSE92981_expression_all_FPKM.txt.gz".
+
+```{r}
+fpkm_full = read_tsv("ftp://ftp.ncbi.nlm.nih.gov/geo/series/GSE92nnn/GSE92981/suppl/GSE92981_expression_all_FPKM.txt.gz")
+```
+
+Let's check the dimensions of the downloaded FPKM table.
+
+```{r}
+dim(fpkm_full)
+```
+
+We should also check the contents of the table. It's a good idea to use `head()` when dealing with potentially large tables to prevent excessive output.
+
+```{r}
+head(fpkm_full)
+```
+
+
+### Download stats
+
+We have the FPKMs, but the table contains the full gene list. We probably want to use just an interesting subset. The study also provides a table of differentially expressed genes. It's not in GEO, but it's in the supplemental data (Supplementary Table S4). Unfortunately, it's an Excel file, which makes it slightly more difficult to import. We'll use the "Table S4-1" sheet (DEGs of TH vs YH).
+
+```{r}
+stats_full = import("https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5473931/bin/41598_2017_3976_MOESM2_ESM.xls", sheet = "Table S4-1", skip = 1)
+```
+
+Check the dimensions of the stats table.
+
+```{r}
+dim(stats_full)
+```
+
+Check the contents of the stats table.
+
+```{r}
+head(stats_full)
+```
+
+
+## Prepare data
+
+
+### Clean up values
+
+The FPKM table has a lot of columns. Let's check just the FPKM table column names.
+
+```{r}
+colnames(fpkm_full)
+```
+
+The `magrittr` package adds the ability to use `%>%` to "pipe" the expression forward, allowing the conversion of nested function calls into a simple pipeline of operations. This makes the code easier to read and work with if you want to perform multiple operations. For example, we can repeat the previous `colnames()` operation with a pipe.
+
+```{r}
+fpkm_full %>% colnames()
+```
+
+Let's clean up the table. The `dplyr` package has many helper functions to make this easier. We'll create a new column with both gene names and gene IDs using `mutate()`, keep only relevant columns with `select()`, convert to a standard data frame (from tibble), and set `gene` column as row names.
+
+```{r}
+fpkm_clean = fpkm_full %>%
+  mutate(gene = paste0(gene_id, ":", gene_name)) %>%
+  select(gene, ends_with("FPKM")) %>%
+  as.data.frame() %>%
+  column_to_rownames("gene")
+head(fpkm_clean)
+```
+
+We can get rid of "FPKM" in column names to keep them simple.
+
+```{r}
+colnames(fpkm_clean) = gsub("_FPKM", "", colnames(fpkm_clean))
+head(fpkm_clean)
+```
+
+In addition to the shape of the table, it's important to check the contents. With thousands of rows, that is hard to do manually. A boxplot can quickly show the distribution.
+
+```{r}
+# "las = 2" makes the sample labels perpendicular
+boxplot(fpkm_clean, las = 2)
+```
+
+The range of values is so high, the boxplots are not even visible. We can log-transform the values to make variation more similar across orders of magnitude.
+
+```{r}
+fpkm_log2 = log2(fpkm_clean + 1)
+boxplot(fpkm_log2, las = 2)
+```
+
+
+### Clean up stats
+
+As we did with FPKMs, we'll create a new column with both gene names and gene IDs so that we have that in common.
+
+```{r}
+stats_full = stats_full %>% mutate(gene = paste0(`Gene ID`, ":", `Gene Name`))
+head(stats_full)
+```
+
+We can sort by significance.
+
+```{r}
+stats_full %>% arrange(`P-value`) %>% head
+```
+
+Get the list of most significant genes.
+
+```{r}
+top_genes = stats_full %>% arrange(`P-value`) %>% head(50) %$% gene
+head(top_genes)
+```
+
+
+## Generate heatmaps
+
+
+### Basic heatmaps
+
+Select 100 random genes to use. We'll only use these genes for the next few examples to save time.
+
+```{r}
+random_genes = sample(rownames(fpkm_clean), 100)
+head(random_genes)
+```
+
+Generate a simple heatmap using the original values for 100 random genes.
+
+```{r}
+pheatmap(fpkm_clean[random_genes, ])
+```
+
+Generate a simple heatmap using the log-transformed values for 100 random genes.
+
+```{r}
+pheatmap(fpkm_log2[random_genes, ])
+```
+
+Center and scale in the row direction.
+
+```{r}
+pheatmap(fpkm_log2[random_genes, ], scale = "row")
+```
+
+
+### Color options
+
+Manually create color range.
+
+```{r}
+my_colors = c("green", "black", "red")
+my_colors
+```
+
+Expand the color range from 3 to 50 values.
+
+```{r}
+my_colors = colorRampPalette(my_colors)(50)
+my_colors
+```
+
+Generate a heatmap with a green/red color scheme.
+
+```{r}
+pheatmap(fpkm_log2[random_genes, ], scale = "row", color = my_colors)
+```
+
+RColorBrewer provides a collection of pre-made color palettes.
+
+```{r}
+display.brewer.all()
+```
+
+Use an RColorBrewer color palette.
+
+```{r}
+my_colors = brewer.pal(n = 11, name = "RdBu")
+my_colors = colorRampPalette(my_colors)(50)
+my_colors = rev(my_colors)
+my_colors
+```
+
+Generate a heatmap with a blue/red color scheme.
+
+```{r}
+pheatmap(fpkm_log2[random_genes, ], scale = "row", color = my_colors)
+```
+
+
+### Significant genes
+
+Visualize the most significant genes.
+
+```{r}
+pheatmap(fpkm_log2[top_genes, ], scale = "row", color = my_colors)
+```
+
+Remove the border around each cell and reduce the row label font size.
+
+```{r}
+pheatmap(fpkm_log2[top_genes, ],
+         scale = "row",
+         color = my_colors,
+         border_color = NA,
+         fontsize_row = 4)
+```
+
+
+## Additional notes
+
+This is just one approach to generating a heatmap. There are many other ways. You can even do it in Excel (sort of). Check this listing of graphical (no coding needed) and R-based alternatives:
+[http://bit.ly/heatmapoptions](http://bit.ly/heatmapoptions).
