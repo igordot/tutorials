@@ -1,12 +1,12 @@
 ---
 title: "Creating Heatmaps in R"
 output:
-  html_document:
-    toc: yes
   html_notebook:
     theme: readable
     toc: yes
     toc_float: yes
+  html_document:
+    toc: yes
 ---
 
 
