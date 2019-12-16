@@ -1,0 +1,270 @@
+---
+title: "Cell Type Annotation"
+output:
+  html_notebook:
+    theme: readable
+    toc: yes
+    toc_float: yes
+    code_folding: none
+---
+
+
+## Introduction
+
+This is a brief tutorial on automatic cell type annotation of single-cell RNA sequencing (scRNA-seq) data. The primary dataset used here is a set of 2,700 Peripheral Blood Mononuclear Cells (PBMCs) processed using the standard Seurat workflow as demonstrated in Seurat's clustering tutorial. It is a reasonably small dataset with well-established cell types that is commonly used in scRNA-seq benchmarking studies.
+
+## Load data
+
+This tutorial includes some Bioconductor dependencies. Before proceeding, confirm that Bioconductor is installed and its version is at least 3.10.
+
+```{r bioc-version}
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+BiocManager::version()
+```
+
+If this is not the case, remove all versions of BiocVersion with `remove.packages("BiocVersion")`. Then update Bioconductor packages using `BiocManager::install()`.
+
+Since we are using a Seurat object, load Seurat and related packages.
+
+```{r load-seurat, message=FALSE, warning=FALSE}
+if (!require("Seurat")) {
+   BiocManager::install("Seurat", update = FALSE)
+   library(Seurat)
+}
+library(ggplot2)
+library(cowplot)
+```
+
+Load other relevant packages.
+
+```{r load-other, message=FALSE, warning=FALSE}
+if (!require("dplyr")) {
+   BiocManager::install("dplyr", update = FALSE)
+   library(dplyr)
+}
+if (!require("stringr")) {
+   BiocManager::install("stringr", update = FALSE)
+   library(stringr)
+}
+```
+
+Load the PBMC dataset using the `SeuratData` package.
+
+```{r load-seurat-data, message=FALSE, warning=FALSE}
+if (!require("SeuratData")) {
+   BiocManager::install("satijalab/seurat-data", update = FALSE)
+   library(SeuratData)
+}
+data("pbmc3k")
+pbmc3k
+```
+
+The dataset includes both the raw and the processed versions.
+
+```{r check-pbmc-final}
+pbmc3k.final
+```
+
+Check the original Seurat cell type labels overlaid onto the UMAP visualization. See the [original Seurat guided clustering tutorial](https://satijalab.org/seurat/v3.0/pbmc3k_tutorial.html) for details on how the data was processed and the labels were assigned.
+
+```{r original-umap}
+DimPlot(pbmc3k.final, reduction = "umap") +
+  scale_color_brewer(palette = "Set1")
+```
+
+## Cell annotation
+
+Load SingleR.
+
+```{r load-singler, message=FALSE, warning=FALSE}
+if (!require("SingleR")) {
+   BiocManager::install("SingleR", update = FALSE)
+   library(SingleR)
+}
+```
+
+SingleR expects the input as a matrix or a SummarizedExperiment object.
+
+```{r exp-mat}
+exp_mat = GetAssayData(pbmc3k.final, assay = "RNA", slot = "data")
+exp_mat = as.matrix(exp_mat)
+dim(exp_mat)
+```
+
+### HPCA main cell types
+
+The SingleR package provides normalized expression values and cell types labels based on bulk RNA-seq, microarray, and single-cell RNA-seq data from several different datasets. See the [SingleR vignette](https://bioconductor.org/packages/3.10/bioc/vignettes/SingleR/inst/doc/SingleR.html#5_available_references) for the description.
+
+We can try the Human Primary Cell Atlas dataset as the reference. It provides normalized expression values for 713 microarray samples that have been assigned to one of 37 main cell types and 157 subtypes.
+
+```{r hpca-se-load, include=FALSE}
+singler_se = HumanPrimaryCellAtlasData()
+```
+
+```{r hpca-se-show}
+singler_se
+```
+
+Restrict to common genes between the test and reference datasets.
+
+```{r hpca-common-genes}
+common_genes = intersect(rownames(exp_mat), rownames(singler_se))
+common_genes = sort(common_genes)
+exp_common_mat = exp_mat[common_genes, ]
+singler_se = singler_se[common_genes, ]
+length(common_genes)
+```
+
+Perform SingleR annotation.
+
+```{r hpca-singler}
+singler_pred = SingleR(
+  test = exp_common_mat,
+  ref = singler_se,
+  labels = singler_se$label.main
+)
+```
+
+Each row of the output data frame contains prediction results for a single cell.
+
+```{r hpca-df}
+head(as.data.frame(singler_pred))
+```
+
+SingleR provides a method to display the scores for all cells across all reference labels to inspect the confidence of the predicted labels across the dataset.
+
+```{r score-heatmap}
+plotScoreHeatmap(singler_pred, show.labels = TRUE, fontsize = 8)
+```
+
+As expected, the non-immune populations have very low scores in these cells.
+
+Add the assigned labels to the Seurat object.
+
+```{r hpca-addmetadata}
+pbmc_labeled_obj = AddMetaData(pbmc3k.final, as.data.frame(singler_pred))
+```
+
+Compare the assigned labels to the original labels.
+
+```{r hpca-table}
+pbmc_labeled_obj@meta.data %>% select(labels, seurat_annotations) %>% table(useNA = "ifany")
+```
+
+SingleR also attempts to remove low quality or ambiguous assignments. Ambiguous assignments are based on the difference between the score for the assigned label and the median across all labels for each cell. Tuning parameters can be adjusted with `pruneScores()`. We can check how many cells are considered ambiguous and which populations they potentially belong to.
+
+```{r hpca-pruned-table}
+pbmc_labeled_obj@meta.data %>% select(pruned.labels, labels) %>% table(useNA = "ifany")
+```
+
+Check the HPCA cell type labels overlaid onto the original UMAP visualization. 
+
+```{r hpca-umap}
+DimPlot(pbmc_labeled_obj, reduction = "umap", group.by = "labels") +
+  scale_color_brewer(palette = "Set1")
+```
+
+### HPCA subtypes
+
+In addition to the 37 main cell types, the HPCA dataset also contains 157 subtypes. You can perform SingleR annotation for the subtypes.
+
+```{r hpca-fine-singler}
+singler_pred = SingleR(
+  test = exp_common_mat,
+  ref = singler_se,
+  labels = singler_se$label.fine
+)
+```
+
+Add the assigned labels to the Seurat object.
+
+```{r hpca-fine-addmetadata}
+pbmc_labeled_obj = AddMetaData(pbmc3k.final, as.data.frame(singler_pred))
+```
+
+Check the assigned labels.
+
+```{r hpca-fine-table}
+pbmc_labeled_obj@meta.data %>%
+  select(labels) %>%
+  table(useNA = "ifany")
+```
+
+Compare the assigned labels to the original labels. Subset to T-cells to keep the output more compact.
+
+```{r hpca-fine-table-t}
+pbmc_labeled_obj@meta.data %>%
+  select(labels, seurat_annotations) %>%
+  filter(str_detect(seurat_annotations, "T")) %>%
+  droplevels() %>%
+  table(useNA = "ifany")
+```
+
+Compare the assigned labels to the original labels. Subset to monocytes to keep the output more compact.
+
+```{r hpca-fine-table-mono}
+pbmc_labeled_obj@meta.data %>%
+  select(labels, seurat_annotations) %>%
+  filter(str_detect(seurat_annotations, "Mono")) %>%
+  droplevels() %>%
+  table(useNA = "ifany")
+```
+
+## Exploratory annotation
+
+ClusterMole provides a collection of cell type markers for over 2,000 populations sourced from a variety of databases.
+
+```{r load-cluster-mole, message=FALSE, warning=FALSE}
+if (!require("ClusterMole")) {
+   BiocManager::install("igordot/clustermole", update = FALSE)
+   library(ClusterMole)
+}
+```
+
+We can retrieve a list of all markers in the ClusterMole database to see all the available options.
+
+```{r clustermole-markers-table}
+markers_tbl = clustermole_markers()
+head(markers_tbl)
+```
+
+A summary of the available cell types.
+
+```{r clustermole-markers-summary}
+markers_tbl %>% distinct(celltype, organ)
+```
+
+Calculate the log-transformed average expression levels for the clusters for enrichment analysis.
+
+```{r avg-exp}
+avg_exp_mat = AverageExpression(pbmc3k.final, assays = "RNA", slot = "data")
+avg_exp_mat = avg_exp_mat$RNA %>% as.matrix()
+avg_exp_mat = log1p(avg_exp_mat)
+```
+
+Check the average exression matrix.
+
+```{r}
+head(avg_exp_mat)
+```
+
+Run enrichment of all signatures across all clusters.
+
+```{r clustermole-enrichment}
+clustermole_tbl = clustermole_enrichment(expr_mat = avg_exp_mat, species = "hs")
+```
+
+Check the top scoring cell types for the B-cell cluster.
+
+```{r clustermole-b-cells}
+clustermole_tbl %>% filter(cluster == "B")
+```
+
+Check the top scoring cell types for the CD8 T-cell cluster.
+
+```{r clustermole-t-cells}
+clustermole_tbl %>% filter(cluster == "CD8 T")
+```
+
