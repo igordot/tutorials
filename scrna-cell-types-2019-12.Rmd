@@ -57,6 +57,7 @@ if (!require("SeuratData")) {
    BiocManager::install("satijalab/seurat-data", update = FALSE)
    library(SeuratData)
 }
+InstallData("pbmc3k")
 data("pbmc3k")
 pbmc3k
 ```
@@ -214,7 +215,7 @@ pbmc_labeled_obj@meta.data %>%
 
 ## Exploratory annotation
 
-ClusterMole provides a collection of cell type markers for over 2,000 populations sourced from a variety of databases.
+[ClusterMole](https://github.com/igordot/clustermole) is an R package that provides a collection of cell type markers for over 2,000 human and mouse cell populations sourced from a variety of databases.
 
 ```{r load-cluster-mole, message=FALSE, warning=FALSE}
 if (!require("ClusterMole")) {
@@ -233,7 +234,7 @@ head(markers_tbl)
 A summary of the available cell types.
 
 ```{r clustermole-markers-summary}
-markers_tbl %>% distinct(celltype, organ)
+markers_tbl %>% distinct(celltype, organ, db)
 ```
 
 Calculate the log-transformed average expression levels for the clusters for enrichment analysis.
