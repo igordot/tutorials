@@ -75,7 +75,7 @@ DimPlot(pbmc3k.final, reduction = "umap") +
   scale_color_brewer(palette = "Set1")
 ```
 
-## Cell annotation
+## Annotation (using SingleR)
 
 Load SingleR.
 
@@ -100,9 +100,11 @@ The SingleR package provides normalized expression values and cell types labels 
 
 We can try the Human Primary Cell Atlas dataset as the reference. It provides normalized expression values for 713 microarray samples that have been assigned to one of 37 main cell types and 157 subtypes.
 
-```{r hpca-se-load, include=FALSE}
+```{r hpca-se-load, message=FALSE, warning=FALSE}
 singler_se = HumanPrimaryCellAtlasData()
 ```
+
+It is possible that this fails with a `No internet connection using 'localHub=TRUE'` error. This may be resolved by running `ExperimentHub::setExperimentHubOption("PROXY", "http://127.0.0.1:10801")`.
 
 ```{r hpca-se-show}
 singler_se
@@ -213,59 +215,94 @@ pbmc_labeled_obj@meta.data %>%
   table(useNA = "ifany")
 ```
 
-## Exploratory annotation
+## Annotation (using clustermole)
 
-[ClusterMole](https://github.com/igordot/clustermole) is an R package that provides a collection of cell type markers for over 2,000 human and mouse cell populations sourced from a variety of databases.
+SingleR is able to label cells, but it requires a reference dataset. This is not a problem for PBMCs, but a perfect reference dataset may not always be available or you may have some unexpected populations.
+
+A more exploratory and unbiased approach is possible with [clustermole](https://github.com/igordot/clustermole), an R package that provides a collection of cell type markers for thousands of human and mouse cell populations sourced from a variety of databases as well as methods to query them.
 
 ```{r load-cluster-mole, message=FALSE, warning=FALSE}
-if (!require("ClusterMole")) {
-   BiocManager::install("igordot/clustermole", update = FALSE)
-   library(ClusterMole)
+if (!require("clustermole")) {
+   install.packages("clustermole")
 }
+library(clustermole)
 ```
 
-We can retrieve a list of all markers in the ClusterMole database to see all the available options.
+### Available cell types
+
+We can retrieve a list of all markers in the ClusterMole database to see all the available options. Each row in the returned data frame is a combination of a single gene and its associated cell type.
 
 ```{r clustermole-markers-table}
 markers_tbl = clustermole_markers()
 head(markers_tbl)
 ```
 
-A summary of the available cell types.
+Check the available cell types (ignore gene columns).
 
 ```{r clustermole-markers-summary}
 markers_tbl %>% distinct(celltype, organ, db)
 ```
 
-Calculate the log-transformed average expression levels for the clusters for enrichment analysis.
+### Marker gene overlaps
+
+We can find markers for the B-cell cluster Seurat's `FindMarkers` function.
+
+```{r find-markers-b}
+b_markers_df = FindMarkers(pbmc3k.final, ident.1 = "B", verbose = FALSE)
+```
+
+Check the markers table.
+
+```{r find-markers-b-head}
+head(b_markers_df)
+```
+
+With the default cutoffs, this gives us a data frame with hundreds of genes. Let's subset to just the top 20 genes.
+
+```{r markers-top-genes}
+b_markers = rownames(b_markers_df)
+b_markers = head(b_markers, 20)
+b_markers
+```
+
+Check overlap of our B-cell markers with all cell type signatures.
+
+```{r clustermole-overlaps}
+overlaps_tbl = clustermole_overlaps(genes = b_markers, species = "hs")
+```
+
+Check the top scoring cell types for the B-cell cluster.
+
+```{r clustermole-overlaps-result}
+head(overlaps_tbl, 10)
+```
+
+### Enrichment of markers
+
+Calculate the average expression levels for the clusters for enrichment analysis using Seurat's `AverageExpression` function, convert to a matrix, and log-transform.
 
 ```{r avg-exp}
 avg_exp_mat = AverageExpression(pbmc3k.final, assays = "RNA", slot = "data")
-avg_exp_mat = avg_exp_mat$RNA %>% as.matrix()
+avg_exp_mat = as.matrix(avg_exp_mat$RNA)
 avg_exp_mat = log1p(avg_exp_mat)
 ```
 
 Check the average exression matrix.
 
-```{r}
+```{r avg-exp-head}
 head(avg_exp_mat)
 ```
 
-Run enrichment of all signatures across all clusters.
+Run enrichment of all cell type signatures across all clusters.
 
 ```{r clustermole-enrichment}
-clustermole_tbl = clustermole_enrichment(expr_mat = avg_exp_mat, species = "hs")
+enrichment_tbl = clustermole_enrichment(expr_mat = avg_exp_mat, species = "hs")
 ```
 
 Check the top scoring cell types for the B-cell cluster.
 
-```{r clustermole-b-cells}
-clustermole_tbl %>% filter(cluster == "B")
+```{r clustermole-enrichment-result}
+enrichment_tbl %>% filter(cluster == "B") %>% head(10)
 ```
 
-Check the top scoring cell types for the CD8 T-cell cluster.
-
-```{r clustermole-t-cells}
-clustermole_tbl %>% filter(cluster == "CD8 T")
-```
 
