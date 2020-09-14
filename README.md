@@ -2,6 +2,7 @@
 
 in reverse chronological order:
 
+* [cell type annotation (2020)](https://igordot.github.io/tutorials/scrna-cell-types-2020-09.nb.html)
 * [cell type annotation (2019)](https://igordot.github.io/tutorials/scrna-cell-types-2019-12.nb.html)
 * [creating heatmaps in R (2017)](https://igordot.github.io/tutorials/heatmaps-2017-07.nb.html)
 * [creating heatmaps in R (2016)](https://github.com/igordot/tutorials/blob/master/heatmaps-2016-07.R)
