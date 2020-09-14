@@ -40,7 +40,7 @@ library(stringr)
 Load the dataset.
 
 ```{r load-seurat-object, message=FALSE, warning=FALSE}
-so = readRDS(url("https://osf.io/cvnqb/download", "rb"))
+so = readRDS(url("https://osf.io/cvnqb/download"))
 so
 ```
 
@@ -152,7 +152,7 @@ DimPlot(so_labeled, reduction = "tsne", group.by = "labels") +
 
 SingleR is able to label cells, but it requires a reference dataset.
 
-A more exploratory and unbiased approach is possible with [clustermole](https://github.com/igordot/clustermole), an R package that provides a collection of cell type markers for thousands of human and mouse cell populations sourced from a variety of databases as well as methods to query them.
+A more exploratory and unbiased approach is possible with [clustermole](https://cran.r-project.org/package=clustermole), an R package that provides a collection of cell type markers for thousands of human and mouse cell populations sourced from a variety of databases as well as methods to query them.
 
 Load clustermole.
 
@@ -236,7 +236,7 @@ Check the top scoring cell types for the B-cell cluster.
 head(overlaps_tbl, 10)
 ```
 
-find markers for the Adipo-CAR cluster
+Find markers for the Adipo-CAR cluster.
 
 ```{r}
 acar_genes = rownames(avg_exp_mat[avg_exp_mat[, "Adipo-CAR"] == rowMaxs(avg_exp_mat), ])
@@ -274,7 +274,7 @@ Check the top scoring cell types for the Adipo-CAR cluster.
 head(overlaps_tbl, 10)
 ```
 
-find markers for the Osteoblasts cluster
+Find markers for the Osteoblasts cluster.
 
 ```{r}
 o_genes = rownames(avg_exp_mat[avg_exp_mat[, "Osteoblasts"] == rowMaxs(avg_exp_mat), ])
@@ -320,18 +320,26 @@ Run enrichment of all cell type signatures across all clusters.
 enrich_tbl = clustermole_enrichment(expr_mat = avg_exp_mat, species = "mm")
 ```
 
-top scoring cell types per cluster
+Most enriched cell types for the B-cell cluster.
 
 ```{r}
 enrich_tbl %>% filter(cluster == "B-cell") %>% select(-cluster) %>% head(10)
 ```
 
+Most enriched cell types for the Adipo-CAR cluster.
+
 ```{r}
 enrich_tbl %>% filter(cluster == "Adipo-CAR") %>% select(-cluster) %>% head(10)
 ```
 
+Most enriched cell types for the Osteoblasts cluster.
+
 ```{r}
 enrich_tbl %>% filter(cluster == "Osteoblasts") %>% select(-cluster) %>% head(10)
 ```
+
+---
+
+[previous tutorials](https://igordot.github.io/tutorials/)
 
 
