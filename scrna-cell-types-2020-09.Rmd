@@ -81,7 +81,7 @@ exp_mat = as.matrix(exp_mat)
 dim(exp_mat)
 ```
 
-### MouseRNAseqData main cell types
+### MouseRNAseqData cell types
 
 The SingleR package provides normalized expression values and cell types labels based on bulk RNA-seq, microarray, and single-cell RNA-seq data from several different datasets. See the [SingleR vignette](https://bioconductor.org/packages/3.10/bioc/vignettes/SingleR/inst/doc/SingleR.html#5_available_references) for the description.
 
@@ -312,7 +312,7 @@ Check the top scoring cell types for the Osteoblasts cluster.
 head(overlaps_tbl, 10)
 ```
 
-## Enrichment of markers
+### Enrichment of markers
 
 Run enrichment of all cell type signatures across all clusters.
 
