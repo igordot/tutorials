@@ -1,0 +1,337 @@
+---
+title: "Cell Type Annotation"
+output:
+  html_notebook:
+    theme: readable
+    toc: yes
+    toc_float: yes
+    code_folding: none
+---
+
+
+## Introduction
+
+This is a brief tutorial on automatic cell type annotation of single-cell RNA sequencing (scRNA-seq) data. The primary dataset used here contains hematopoietic and stromal bone marrow populations ([Baccin et al.](https://doi.org/10.1038/s41556-019-0439-6)). The version used here is a subset of the original dataset to have more similar population sizes and speed up processing.
+
+## Load data
+
+This tutorial includes some Bioconductor dependencies. Before proceeding, confirm that Bioconductor is installed and its version is at least 3.10.
+
+```{r bioc-version}
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+BiocManager::version()
+```
+
+If this is not the case, remove all versions of BiocVersion with `remove.packages("BiocVersion")`. Then update Bioconductor packages using `BiocManager::install()`.
+
+Since we are using a Seurat object, load Seurat and related packages.
+
+```{r load-libraries, message=FALSE, warning=FALSE}
+library(Seurat)
+library(ggplot2)
+library(cowplot)
+library(ggsci)
+library(dplyr)
+library(stringr)
+```
+
+Load the dataset.
+
+```{r load-seurat-object, message=FALSE, warning=FALSE}
+so = readRDS(url("https://osf.io/cvnqb/download", "rb"))
+so
+```
+
+Check the experiment labels overlaid onto the UMAP visualization.
+
+```{r umap-exp}
+DimPlot(so, reduction = "umap", group.by = "experiment", cells = sample(colnames(so))) +
+  scale_color_nejm()
+```
+
+Check the experiment labels overlaid onto the tSNE visualization, as shown in the original publication ([original figure](https://www.nature.com/articles/s41556-019-0439-6/figures/1)).
+
+```{r tsne-exp}
+DimPlot(so, reduction = "tsne", group.by = "experiment", cells = sample(colnames(so))) +
+  scale_color_nejm()
+```
+
+Check the cell type labels overlaid onto the tSNE visualization.
+
+```{r tsne-celltype}
+DimPlot(so, reduction = "tsne", group.by = "celltype", cells = sample(colnames(so))) +
+  scale_color_igv()
+```
+
+## Annotation using SingleR
+
+Load SingleR (install with `BiocManager::install("SingleR")`).
+
+```{r load-singler, message=FALSE, warning=FALSE}
+library(SingleR)
+```
+
+SingleR expects the input as a matrix or a SummarizedExperiment object.
+
+```{r exp-mat}
+exp_mat = GetAssayData(so, assay = "RNA", slot = "data")
+exp_mat = as.matrix(exp_mat)
+dim(exp_mat)
+```
+
+### MouseRNAseqData main cell types
+
+The SingleR package provides normalized expression values and cell types labels based on bulk RNA-seq, microarray, and single-cell RNA-seq data from several different datasets. See the [SingleR vignette](https://bioconductor.org/packages/3.10/bioc/vignettes/SingleR/inst/doc/SingleR.html#5_available_references) for the description.
+
+We will try the mouse dataset from 358 bulk RNA-seq samples of sorted cell populations as the reference. It provides normalized expression values for samples that have been assigned to one of 18 main cell types and 28 subtypes.
+
+```{r mousernaseq-se-load, include=FALSE}
+singler_se = MouseRNAseqData()
+```
+
+It is possible that this fails with a `No internet connection using 'localHub=TRUE'` error. This may be resolved by running `ExperimentHub::setExperimentHubOption("PROXY", "http://127.0.0.1:10801")`.
+
+```{r mousernaseq-se-show}
+singler_se
+```
+
+Restrict to common genes between the test and reference datasets.
+
+```{r mousernaseq-common-genes}
+common_genes = intersect(rownames(exp_mat), rownames(singler_se))
+common_genes = sort(common_genes)
+exp_common_mat = exp_mat[common_genes, ]
+singler_se = singler_se[common_genes, ]
+length(common_genes)
+```
+
+Perform SingleR annotation.
+
+```{r mousernaseq-singler}
+singler_pred = SingleR(
+  test = exp_common_mat,
+  ref = singler_se,
+  labels = singler_se$label.main
+)
+```
+
+Each row of the output data frame contains prediction results for a single cell.
+
+```{r mousernaseq-df}
+head(as.data.frame(singler_pred))
+```
+
+Add the assigned labels to the Seurat object.
+
+```{r mousernaseq-addmetadata}
+so_labeled = AddMetaData(so, as.data.frame(singler_pred))
+```
+
+Check the assigned labels to the original labels.
+
+```{r mousernaseq-table}
+so_labeled@meta.data %>% select(labels) %>% table(useNA = "ifany")
+```
+
+SingleR also attempts to remove low quality or ambiguous assignments. Ambiguous assignments are based on the difference between the score for the assigned label and the median across all labels for each cell. Tuning parameters can be adjusted with `pruneScores()`. We can check how many cells are considered ambiguous and which populations they potentially belong to.
+
+```{r mousernaseq-pruned-table}
+so_labeled@meta.data %>% select(pruned.labels) %>% table(useNA = "ifany")
+```
+
+Visualize MouseRNAseqData cell type labels.
+
+```{r mousernaseq-tsne}
+DimPlot(so_labeled, reduction = "tsne", group.by = "labels") +
+  scale_color_igv()
+```
+
+## Annotation using clustermole
+
+SingleR is able to label cells, but it requires a reference dataset.
+
+A more exploratory and unbiased approach is possible with [clustermole](https://github.com/igordot/clustermole), an R package that provides a collection of cell type markers for thousands of human and mouse cell populations sourced from a variety of databases as well as methods to query them.
+
+Load clustermole.
+
+```{r load-clustermole, message=FALSE, warning=FALSE}
+library(clustermole)
+```
+
+### Available cell types
+
+We can retrieve a list of all markers in the clustermole database to see all the available options. Each row in the returned data frame is a combination of each cell type and its genes.
+
+```{r clustermole-markers-table}
+markers_tbl = clustermole_markers()
+head(markers_tbl)
+```
+
+Check the available cell types (ignore gene columns).
+
+```{r clustermole-markers-summary}
+markers_tbl %>% distinct(celltype, organ, db)
+```
+
+### Marker gene overlaps
+
+Calculate the average expression levels for the clusters for enrichment analysis using Seurat's `AverageExpression` function, convert to a matrix, and log-transform.
+
+```{r avg-exp}
+Idents(so) = "celltype"
+avg_exp_mat = AverageExpression(so, assays = "RNA", slot = "data")
+avg_exp_mat = as.matrix(avg_exp_mat$RNA)
+avg_exp_mat = log1p(avg_exp_mat)
+```
+
+Check the average expression matrix.
+
+```{r avg-exp-head}
+avg_exp_mat[1:5, 1:5]
+```
+
+Check the cell type names.
+
+```{r}
+levels(Idents(so))
+```
+
+Find markers for the B-cell cluster.
+
+```{r}
+b_genes = rownames(avg_exp_mat[avg_exp_mat[, "B-cell"] == rowMaxs(avg_exp_mat), ])
+length(b_genes)
+```
+
+```{r find-markers-b}
+b_markers_df = FindMarkers(so, ident.1 = "B-cell", features = b_genes, verbose = FALSE)
+nrow(b_markers_df)
+```
+
+Check the markers table.
+
+```{r find-markers-b-head}
+head(b_markers_df)
+```
+
+With the default cutoffs, this gives us a data frame with hundreds of genes. Let's subset to just the top 20 genes.
+
+```{r markers-top-genes}
+b_markers = rownames(b_markers_df)
+b_markers = head(b_markers, 20)
+b_markers
+```
+
+Check overlap of our B-cell markers with all cell type signatures.
+
+```{r clustermole-overlaps}
+overlaps_tbl = clustermole_overlaps(genes = b_markers, species = "mm")
+```
+
+Check the top scoring cell types for the B-cell cluster.
+
+```{r clustermole-overlaps-result}
+head(overlaps_tbl, 10)
+```
+
+find markers for the Adipo-CAR cluster
+
+```{r}
+acar_genes = rownames(avg_exp_mat[avg_exp_mat[, "Adipo-CAR"] == rowMaxs(avg_exp_mat), ])
+length(acar_genes)
+```
+
+```{r}
+acar_markers_df = FindMarkers(so, ident.1 = "Adipo-CAR", features = acar_genes, verbose = FALSE)
+nrow(acar_markers_df)
+```
+
+Check the markers table.
+
+```{r}
+head(acar_markers_df)
+```
+
+With the default cutoffs, this gives us a data frame with hundreds of genes. Let's subset to just the top 20 genes.
+
+```{r}
+acar_markers = rownames(acar_markers_df)
+acar_markers = head(acar_markers, 20)
+acar_markers
+```
+
+Check overlap of our Adipo-CAR markers with all cell type signatures.
+
+```{r}
+overlaps_tbl = clustermole_overlaps(genes = acar_markers, species = "mm")
+```
+
+Check the top scoring cell types for the Adipo-CAR cluster.
+
+```{r}
+head(overlaps_tbl, 10)
+```
+
+find markers for the Osteoblasts cluster
+
+```{r}
+o_genes = rownames(avg_exp_mat[avg_exp_mat[, "Osteoblasts"] == rowMaxs(avg_exp_mat), ])
+length(o_genes)
+```
+
+```{r}
+o_markers_df = FindMarkers(so, ident.1 = "Osteoblasts", features = o_genes, verbose = FALSE)
+nrow(o_markers_df)
+```
+
+Check the markers table.
+
+```{r}
+head(o_markers_df)
+```
+
+With the default cutoffs, this gives us a data frame with hundreds of genes. Let's subset to just the top 20 genes.
+
+```{r}
+o_markers = rownames(o_markers_df)
+o_markers = head(o_markers, 20)
+o_markers
+```
+
+Check overlap of our Osteoblasts markers with all cell type signatures.
+
+```{r}
+overlaps_tbl = clustermole_overlaps(genes = o_markers, species = "mm")
+```
+
+Check the top scoring cell types for the Osteoblasts cluster.
+
+```{r}
+head(overlaps_tbl, 10)
+```
+
+## Enrichment of markers
+
+Run enrichment of all cell type signatures across all clusters.
+
+```{r}
+enrich_tbl = clustermole_enrichment(expr_mat = avg_exp_mat, species = "mm")
+```
+
+top scoring cell types per cluster
+
+```{r}
+enrich_tbl %>% filter(cluster == "B-cell") %>% select(-cluster) %>% head(10)
+```
+
+```{r}
+enrich_tbl %>% filter(cluster == "Adipo-CAR") %>% select(-cluster) %>% head(10)
+```
+
+```{r}
+enrich_tbl %>% filter(cluster == "Osteoblasts") %>% select(-cluster) %>% head(10)
+```
+
+
